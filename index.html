@@ -29,6 +29,10 @@
     .low { background: #e8f4eb; color: #246336; }
     .overdue { color: #a02121; font-weight: bold; }
     .delete { background: #a32f2f; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .cancel { background: #586274; }
+    #edit-message { color: #243b63; font-weight: bold; }
+    @media (max-width: 440px) { li { flex-wrap: wrap; } .actions { width: 100%; justify-content: flex-end; } }
     #summary, #empty { color: #555; font-size: 14px; }
     #storage-message { color: #a02121; }
     @media (max-width: 440px) { .app { padding: 18px; } .form > label:not(.name) { flex: 1 1 100%; } }
@@ -38,6 +42,7 @@
   <main class="app">
     <h1>Minhas Tarefas</h1>
     <p>Organize suas tarefas por prioridade e prazo.</p>
+    <p id="edit-message" role="status" hidden></p>
     <form id="form" class="form">
       <label class="name" for="task">Tarefa
         <input id="task" placeholder="O que você precisa fazer?" maxlength="150" required>
@@ -46,7 +51,8 @@
         <select id="priority"><option value="low">Baixa</option><option value="medium" selected>Média</option><option value="high">Alta</option></select>
       </label>
       <label for="due-date">Prazo (opcional)<input id="due-date" type="date" min="0001-01-01" max="9999-12-31"></label>
-      <button type="submit">Adicionar</button>
+      <button id="submit-task" type="submit">Adicionar</button>
+      <button id="cancel-edit" class="cancel" type="button" hidden>Cancelar edição</button>
     </form>
     <div class="filters" role="group" aria-label="Filtros de tarefas">
       <label for="status-filter">Mostrar
@@ -66,6 +72,27 @@
     const priorityNames = { low: "Baixa", medium: "Média", high: "Alta" };
     const byId = id => document.getElementById(id);
     let tasks = [];
+    let editingId = null;
+    function finishEditing() {
+      editingId = null;
+      byId("task").value = "";
+      byId("priority").value = "medium";
+      byId("due-date").value = "";
+      byId("submit-task").textContent = "Adicionar";
+      byId("cancel-edit").hidden = true;
+      byId("edit-message").hidden = true;
+    }
+    function startEditing(task) {
+      editingId = task.id;
+      byId("task").value = task.name;
+      byId("priority").value = task.priority;
+      byId("due-date").value = task.dueDate;
+      byId("submit-task").textContent = "Salvar alterações";
+      byId("cancel-edit").hidden = false;
+      byId("edit-message").textContent = "Editando tarefa. Altere os campos abaixo e salve, ou cancele para manter a versão anterior.";
+      byId("edit-message").hidden = false;
+      byId("task").focus();
+    }
     // Mantém a chave original para aproveitar as tarefas já cadastradas.
     function validDate(value) {
       if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -143,8 +170,19 @@
         remove.textContent = "Excluir";
         remove.className = "delete";
         remove.setAttribute("aria-label", `Excluir ${task.name}`);
-        remove.onclick = () => { tasks = tasks.filter(item => item.id !== task.id); save(); render(); };
-        li.append(checkbox, details, remove);
+        remove.onclick = () => {
+          if (editingId === task.id) finishEditing();
+          tasks = tasks.filter(item => item.id !== task.id); save(); render();
+        };
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.textContent = "Editar";
+        edit.setAttribute("aria-label", `Editar ${task.name}`);
+        edit.onclick = () => startEditing(task);
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        actions.append(edit, remove);
+        li.append(checkbox, details, actions);
         list.append(li);
       });
       byId("empty").hidden = visible.length > 0;
@@ -159,13 +197,23 @@
       if (!name) { input.focus(); return; }
       const dueDate = byId("due-date").value;
       if (dueDate && !validDate(dueDate)) return;
-      tasks.push({ id: crypto.randomUUID(), name, done: false, priority: byId("priority").value, dueDate });
+      if (editingId !== null) {
+        const task = tasks.find(item => item.id === editingId);
+        if (!task) { finishEditing(); render(); return; }
+        task.name = name;
+        task.priority = byId("priority").value;
+        task.dueDate = dueDate;
+      } else {
+        tasks.push({ id: crypto.randomUUID(), name, done: false, priority: byId("priority").value, dueDate });
+      }
       save();
+      finishEditing();
       render();
       input.value = "";
       input.focus();
     };
     byId("status-filter").onchange = render;
+    byId("cancel-edit").onclick = () => { finishEditing(); byId("task").focus(); };
     byId("priority-filter").onchange = render;
     // Atualiza o aviso de atraso quando o usuário volta à página.
     window.addEventListener("focus", render);
