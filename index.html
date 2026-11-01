@@ -12,6 +12,8 @@
     .form, .filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
     label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
     .name { flex: 1 1 100%; }
+    .wide { flex: 1 1 100%; }
+    .tag { background: #edf2f8; color: #243b63; padding: 3px 7px; border-radius: 5px; }
     input:not([type="checkbox"]), select, button { font: inherit; padding: 12px; border: 1px solid #bbb; border-radius: 8px; max-width: 100%; }
     input, select { background: white; color: #222; }
     button { background: #243b63; color: white; border: none; cursor: pointer; }
@@ -51,10 +53,20 @@
         <select id="priority"><option value="low">Baixa</option><option value="medium" selected>Média</option><option value="high">Alta</option></select>
       </label>
       <label for="due-date">Prazo (opcional)<input id="due-date" type="date" min="0001-01-01" max="9999-12-31"></label>
+      <label class="wide" for="assignee">Responsável (opcional)
+        <input id="assignee" maxlength="80" placeholder="Ex.: Ana Souza">
+      </label>
+      <label class="wide" for="tags">Tags (opcional, separadas por vírgula)
+        <input id="tags" maxlength="300" placeholder="Ex.: vendas, cliente, urgente" aria-describedby="tags-help">
+        <small id="tags-help">Até 10 tags, com até 30 caracteres cada.</small>
+      </label>
       <button id="submit-task" type="submit">Adicionar</button>
       <button id="cancel-edit" class="cancel" type="button" hidden>Cancelar edição</button>
     </form>
     <div class="filters" role="group" aria-label="Filtros de tarefas">
+      <label class="wide" for="search">Pesquisar tarefas
+        <input id="search" type="search" placeholder="Busque por texto, tag ou responsável">
+      </label>
       <label for="status-filter">Mostrar
         <select id="status-filter"><option value="all">Todas</option><option value="pending">Pendentes</option><option value="done">Concluídas</option></select>
       </label>
@@ -73,11 +85,23 @@
     const byId = id => document.getElementById(id);
     let tasks = [];
     let editingId = null;
+    const normalizeText = value => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
+    function parseTags(value) {
+      const seen = new Set();
+      return value.split(",").map(tag => tag.trim().slice(0, 30)).filter(tag => {
+        const normalized = normalizeText(tag);
+        if (!tag || seen.has(normalized)) return false;
+        seen.add(normalized);
+        return true;
+      }).slice(0, 10);
+    }
     function finishEditing() {
       editingId = null;
       byId("task").value = "";
       byId("priority").value = "medium";
       byId("due-date").value = "";
+      byId("tags").value = "";
+      byId("assignee").value = "";
       byId("submit-task").textContent = "Adicionar";
       byId("cancel-edit").hidden = true;
       byId("edit-message").hidden = true;
@@ -87,6 +111,8 @@
       byId("task").value = task.name;
       byId("priority").value = task.priority;
       byId("due-date").value = task.dueDate;
+      byId("tags").value = task.tags.join(", ");
+      byId("assignee").value = task.assignee;
       byId("submit-task").textContent = "Salvar alterações";
       byId("cancel-edit").hidden = false;
       byId("edit-message").textContent = "Editando tarefa. Altere os campos abaixo e salve, ou cancele para manter a versão anterior.";
@@ -112,7 +138,9 @@
         name: task.name,
         done: task.done === true,
         priority: Object.hasOwn(priorityNames, task.priority) ? task.priority : "medium",
-        dueDate: validDate(task.dueDate) ? task.dueDate : ""
+        dueDate: validDate(task.dueDate) ? task.dueDate : "",
+        tags: Array.isArray(task.tags) ? parseTags(task.tags.filter(tag => typeof tag === "string").join(",")) : [],
+        assignee: typeof task.assignee === "string" ? task.assignee.trim().slice(0, 80) : ""
       }));
     } catch {
       storageMessage("Não foi possível carregar as tarefas salvas. Os dados existentes não foram alterados. Novas alterações tentarão salvar a lista atual.");
@@ -134,9 +162,11 @@
       list.replaceChildren();
       const status = byId("status-filter").value;
       const priority = byId("priority-filter").value;
+      const terms = normalizeText(byId("search").value.trim()).split(/\s+/).filter(Boolean);
       const visible = tasks.filter(task =>
         (status === "all" || (status === "done" ? task.done : !task.done)) &&
-        (priority === "all" || task.priority === priority));
+        (priority === "all" || task.priority === priority) &&
+        terms.every(term => normalizeText([task.name, task.assignee, ...task.tags].join(" ")).includes(term)));
       const today = localToday();
       visible.forEach(task => {
         const li = document.createElement("li");
@@ -157,6 +187,15 @@
         badge.className = `priority ${task.priority}`;
         badge.textContent = `Prioridade: ${priorityNames[task.priority]}`;
         meta.append(badge);
+        const person = document.createElement("span");
+        person.textContent = task.assignee ? `Responsável: ${task.assignee}` : "Sem responsável";
+        meta.append(person);
+        task.tags.forEach(tag => {
+          const tagElement = document.createElement("span");
+          tagElement.className = "tag";
+          tagElement.textContent = `#${tag}`;
+          meta.append(tagElement);
+        });
         if (task.dueDate) {
           const date = document.createElement("span");
           const overdue = !task.done && task.dueDate < today;
@@ -197,14 +236,18 @@
       if (!name) { input.focus(); return; }
       const dueDate = byId("due-date").value;
       if (dueDate && !validDate(dueDate)) return;
+      const tags = parseTags(byId("tags").value);
+      const assignee = byId("assignee").value.trim().slice(0, 80);
       if (editingId !== null) {
         const task = tasks.find(item => item.id === editingId);
         if (!task) { finishEditing(); render(); return; }
         task.name = name;
         task.priority = byId("priority").value;
         task.dueDate = dueDate;
+        task.tags = tags;
+        task.assignee = assignee;
       } else {
-        tasks.push({ id: crypto.randomUUID(), name, done: false, priority: byId("priority").value, dueDate });
+        tasks.push({ id: crypto.randomUUID(), name, done: false, priority: byId("priority").value, dueDate, tags, assignee });
       }
       save();
       finishEditing();
@@ -215,6 +258,7 @@
     byId("status-filter").onchange = render;
     byId("cancel-edit").onclick = () => { finishEditing(); byId("task").focus(); };
     byId("priority-filter").onchange = render;
+    byId("search").oninput = render;
     // Atualiza o aviso de atraso quando o usuário volta à página.
     window.addEventListener("focus", render);
     render();
